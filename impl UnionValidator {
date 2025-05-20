@@ -1,0 +1,67 @@
+impl UnionValidator {
+    fn validate_smart<'py>(
+        &self,
+        py: Python<'py>,
+        input: &(impl Input<'py> + ?Sized),
+        state: &mut ValidationState<'_, 'py>,
+    ) -> ValResult<PyObject> {
+        let old_exactness = state.exactness;
+        let mut errors = MaybeErrors::new(self.custom_error.as_ref());
+
+        let mut success = None;
+
+        for (choice, label) in &self.choices {
+            // Get strictness per choice if available, else fallback to union/global strict
+            // Assuming each choice has a method or field .strict returning Option<bool>
+            // If not, you need to add it.
+            let strict_for_choice = choice
+                .strict()  // <-- You must implement this method returning Option<bool>
+                .unwrap_or(self.strict);
+
+            // Rebind validation state to set strict per choice
+            let state = &mut state.rebind_extra(|extra| {
+                extra.strict = Some(strict_for_choice);
+            });
+
+            state.exactness = Some(Exactness::Exact);
+
+            let result = choice.validate(py, input, state);
+
+            match result {
+                Ok(new_success) => match state.exactness {
+                    Some(Exactness::Exact) => {
+                        // exact match — restore exactness and return immediately
+                        state.exactness = old_exactness;
+                        return Ok(new_success);
+                    }
+                    _ => {
+                        debug_assert_ne!(state.exactness, None);
+                        let new_exactness = state.exactness.unwrap_or(Exactness::Lax);
+
+                        if success
+                            .as_ref()
+                            .map_or(true, |(_, current_exactness)| *current_exactness < new_exactness)
+                        {
+                            success = Some((new_success, new_exactness));
+                        }
+                    }
+                },
+                Err(ValError::LineErrors(lines)) => {
+                    if success.is_none() {
+                        errors.push(choice, label.as_deref(), lines);
+                    }
+                }
+                otherwise => return otherwise,
+            }
+        }
+
+        state.exactness = old_exactness;
+
+        if let Some((success, exactness)) = success {
+            state.floor_exactness(exactness);
+            return Ok(success);
+        }
+
+        Err(errors.into_val_error(input))
+    }
+}
