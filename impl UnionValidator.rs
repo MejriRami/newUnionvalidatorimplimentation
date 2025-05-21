@@ -30,10 +30,11 @@ pub struct FieldValidator {
 
 #[derive(Debug, Clone)]
 pub struct UnionValidator {
-    pub choices: Vec<(Validator, Option<String>)>,
-    pub strict: bool,
-    pub custom_error: Option<String>,
-    // ... other existing fields ...
+     mode: UnionMode,
+    choices: Vec<(CombinedValidator, Option<String>)>,
+    custom_error: Option<CustomError>,
+    strict: bool,
+    name: String,
 }
 
 impl UnionValidator {
